@@ -16,7 +16,6 @@ const {
 
 // Função para descriptografar dados de um Flow REAL.
 function decryptFlowData(body) {
-  // 1. Descriptografar a chave AES.
   const aesKey = crypto.privateDecrypt(
     {
       key: WHATSAPP_PRIVATE_KEY,
@@ -26,20 +25,16 @@ function decryptFlowData(body) {
     Buffer.from(body.encrypted_aes_key, "base64")
   );
 
-  // 2. Preparar o IV e o payload combinado (ciphertext + tag).
-  const iv = Buffer.from(body.iv, "base64");
   const encryptedFlowDataWithTag = Buffer.from(body.encrypted_flow_data, "base64");
+  const iv = Buffer.from(body.iv, "base64");
 
-  // 3. CORREÇÃO CRÍTICA: Separar a tag (últimos 16 bytes) do ciphertext.
   const tagLength = 16;
   const ciphertext = encryptedFlowDataWithTag.slice(0, -tagLength);
   const authTag = encryptedFlowDataWithTag.slice(-tagLength);
 
-  // 4. Criar o decipher e definir a tag de autenticação.
   const decipher = crypto.createDecipheriv("aes-256-gcm", aesKey, iv);
   decipher.setAuthTag(authTag);
 
-  // 5. Descriptografar o ciphertext.
   const decrypted = Buffer.concat([
     decipher.update(ciphertext),
     decipher.final(),
@@ -83,63 +78,61 @@ app.post("/webhook", (req, res) => {
     console.log("Signature verified.");
     const body = JSON.parse(req.body);
 
-    // CASO 1: É uma Verificação de Integridade (Health Check)
-    if (body.action === 'health_check' && body.challenge) {
-      console.log("Health check triggered. Performing handshake.");
-      
-      const aesKey = crypto.privateDecrypt(
-        {
-          key: WHATSAPP_PRIVATE_KEY,
-          padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
-          oaepHash: "sha256",
-        },
-        Buffer.from(body.encrypted_aes_key, "base64")
-      );
+    if (body.encrypted_flow_data) {
+      try {
+        // Tenta descriptografar como se fosse um dado de usuário real.
+        const decryptedData = decryptFlowData(body);
+        console.log("Successfully decrypted user data.");
 
-      const cipher = crypto.createCipheriv(
-        "aes-256-gcm",
-        aesKey,
-        Buffer.from(body.initial_vector, "base64")
-      );
-
-      const encrypted = Buffer.concat([
-        cipher.update(Buffer.from(body.challenge)),
-        cipher.final(),
-      ]);
-
-      const authTag = cipher.getAuthTag();
-      const responsePayload = Buffer.concat([encrypted, authTag]).toString("base64");
-
-      console.log("Handshake successful.");
-      return res.status(200).send(responsePayload);
-    }
-    
-    // CASO 2: É uma interação real do usuário
-    else if (body.encrypted_flow_data) {
-      console.log("User interaction data received. Decrypting...");
-      const decryptedData = decryptFlowData(body);
-      
-      const { screen, data, version } = decryptedData;
-      if (screen === 'SCREEN_ID_NOME') {
-        const userName = data.name_input || 'amigo(a)';
-        const responseScreen = {
-          version,
-          screen: 'SCREEN_ID_SUCESSO',
-          data: {
-            success_title: `Obrigado, ${userName}!`,
-            success_message: 'Seu agendamento foi recebido com sucesso.',
+        const { screen, data, version } = decryptedData;
+        if (screen === 'SCREEN_ID_NOME') {
+          const userName = data.name_input || 'amigo(a)';
+          const responseScreen = {
+            version,
+            screen: 'SCREEN_ID_SUCESSO',
+            data: {
+              success_title: `Obrigado, ${userName}!`,
+              success_message: 'Seu agendamento foi recebido com sucesso.',
+            },
+          };
+          console.log("Responding to SCREEN_ID_NOME");
+          return res.status(200).json(responseScreen);
+        }
+      } catch (error) {
+        // Se a descriptografia falhou, é a Verificação de Integridade.
+        console.log("Could not decrypt data, assuming it's an integrity check. Performing handshake.");
+        
+        const aesKey = crypto.privateDecrypt(
+          {
+            key: WHATSAPP_PRIVATE_KEY,
+            padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
+            oaepHash: "sha256",
           },
-        };
-        console.log("Responding to SCREEN_ID_NOME");
-        return res.status(200).json(responseScreen);
+          Buffer.from(body.encrypted_aes_key, "base64")
+        );
+
+        const cipher = crypto.createCipheriv(
+          "aes-256-gcm",
+          aesKey,
+          Buffer.from(body.initial_vector, "base64")
+        );
+
+        // O "desafio" é o próprio encrypted_flow_data que não pôde ser descriptografado.
+        const encrypted = Buffer.concat([
+          cipher.update(Buffer.from(body.encrypted_flow_data, "base64")),
+          cipher.final(),
+        ]);
+
+        const authTag = cipher.getAuthTag();
+        const responsePayload = Buffer.concat([encrypted, authTag]).toString("base64");
+
+        console.log("Handshake successful.");
+        return res.status(200).send(responsePayload);
       }
     }
 
-    // CASO 3: Outro tipo de requisição
-    else {
-        console.log("Received a simple ping or unknown request type.");
-        return res.sendStatus(200);
-    }
+    console.log("Received a request with no encrypted data to process.");
+    return res.sendStatus(200);
 
   } catch (error) {
     console.error("An error occurred in the POST /webhook endpoint:", error);
