@@ -16,6 +16,7 @@ const {
 
 // Função para descriptografar dados de um Flow REAL.
 function decryptFlowData(body) {
+  // 1. Descriptografar a chave AES.
   const aesKey = crypto.privateDecrypt(
     {
       key: WHATSAPP_PRIVATE_KEY,
@@ -25,16 +26,22 @@ function decryptFlowData(body) {
     Buffer.from(body.encrypted_aes_key, "base64")
   );
 
-  const decipher = crypto.createDecipheriv(
-    "aes-256-gcm",
-    aesKey,
-    Buffer.from(body.iv, "base64")
-  );
+  // 2. Preparar o IV e o payload combinado (ciphertext + tag).
+  const iv = Buffer.from(body.iv, "base64");
+  const encryptedFlowDataWithTag = Buffer.from(body.encrypted_flow_data, "base64");
 
-  decipher.setAuthTag(Buffer.from(body.tag, "base64"));
+  // 3. CORREÇÃO CRÍTICA: Separar a tag (últimos 16 bytes) do ciphertext.
+  const tagLength = 16;
+  const ciphertext = encryptedFlowDataWithTag.slice(0, -tagLength);
+  const authTag = encryptedFlowDataWithTag.slice(-tagLength);
 
+  // 4. Criar o decipher e definir a tag de autenticação.
+  const decipher = crypto.createDecipheriv("aes-256-gcm", aesKey, iv);
+  decipher.setAuthTag(authTag);
+
+  // 5. Descriptografar o ciphertext.
   const decrypted = Buffer.concat([
-    decipher.update(Buffer.from(body.encrypted_flow_data, "base64")),
+    decipher.update(ciphertext),
     decipher.final(),
   ]);
 
@@ -76,10 +83,6 @@ app.post("/webhook", (req, res) => {
     console.log("Signature verified.");
     const body = JSON.parse(req.body);
 
-    // ==================================================================
-    // LÓGICA CORRETA: Separar o Health Check da Interação do Usuário
-    // ==================================================================
-
     // CASO 1: É uma Verificação de Integridade (Health Check)
     if (body.action === 'health_check' && body.challenge) {
       console.log("Health check triggered. Performing handshake.");
@@ -99,7 +102,6 @@ app.post("/webhook", (req, res) => {
         Buffer.from(body.initial_vector, "base64")
       );
 
-      // CORREÇÃO CRÍTICA: Criptografar o `challenge`, não o `encrypted_flow_data`.
       const encrypted = Buffer.concat([
         cipher.update(Buffer.from(body.challenge)),
         cipher.final(),
@@ -133,7 +135,7 @@ app.post("/webhook", (req, res) => {
       }
     }
 
-    // CASO 3: Outro tipo de requisição (como um ping simples)
+    // CASO 3: Outro tipo de requisição
     else {
         console.log("Received a simple ping or unknown request type.");
         return res.sendStatus(200);
