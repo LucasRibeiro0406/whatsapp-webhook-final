@@ -1,16 +1,14 @@
 {
-  "name": "whatsapp-flow-webhook-render",
+  "name": "whatsapp-flow-webhook-final",
   "version": "1.0.0",
-  "description": "Webhook funcional para WhatsApp Flows no Render.",
+  "description": "Webhook funcional para WhatsApp Flows, baseado no exemplo oficial.",
   "main": "server.js",
+  "type": "module",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "generate-keys": "node src/keyGenerator.js"
   },
   "dependencies": {
-    "express": "^4.19.2",
-    "body-parser": "^1.20.2"
-  },
-  "engines": {
-    "node": "18.x"
+    "express": "^4.19.2"
   }
 }
