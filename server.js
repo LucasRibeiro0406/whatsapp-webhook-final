@@ -76,63 +76,68 @@ app.post("/webhook", (req, res) => {
     console.log("Signature verified.");
     const body = JSON.parse(req.body);
 
-    if (body.encrypted_flow_data) {
-      let decryptedData;
-      try {
-        // Tenta descriptografar como se fosse um dado de usuário real.
-        decryptedData = decryptFlowData(body);
-        console.log("Successfully decrypted user data.");
+    // ==================================================================
+    // LÓGICA CORRETA: Separar o Health Check da Interação do Usuário
+    // ==================================================================
 
-        // Se chegou aqui, é uma interação real do Flow.
-        const { screen, data, version } = decryptedData;
-        if (screen === 'SCREEN_ID_NOME') {
-          const userName = data.name_input || 'amigo(a)';
-          const responseScreen = {
-            version,
-            screen: 'SCREEN_ID_SUCESSO',
-            data: {
-              success_title: `Obrigado, ${userName}!`,
-              success_message: 'Seu agendamento foi recebido com sucesso.',
-            },
-          };
-          console.log("Responding to SCREEN_ID_NOME");
-          return res.status(200).json(responseScreen);
-        }
-      } catch (error) {
-        // Se a descriptografia falhou, é a Verificação de Integridade.
-        console.log("Could not decrypt data, assuming it's an integrity check. Performing handshake.");
-        
-        const aesKey = crypto.privateDecrypt(
-          {
-            key: WHATSAPP_PRIVATE_KEY,
-            padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
-            oaepHash: "sha256",
+    // CASO 1: É uma Verificação de Integridade (Health Check)
+    if (body.action === 'health_check' && body.challenge) {
+      console.log("Health check triggered. Performing handshake.");
+      
+      const aesKey = crypto.privateDecrypt(
+        {
+          key: WHATSAPP_PRIVATE_KEY,
+          padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
+          oaepHash: "sha256",
+        },
+        Buffer.from(body.encrypted_aes_key, "base64")
+      );
+
+      const cipher = crypto.createCipheriv(
+        "aes-256-gcm",
+        aesKey,
+        Buffer.from(body.initial_vector, "base64")
+      );
+
+      // CORREÇÃO CRÍTICA: Criptografar o `challenge`, não o `encrypted_flow_data`.
+      const encrypted = Buffer.concat([
+        cipher.update(Buffer.from(body.challenge)),
+        cipher.final(),
+      ]);
+
+      const authTag = cipher.getAuthTag();
+      const responsePayload = Buffer.concat([encrypted, authTag]).toString("base64");
+
+      console.log("Handshake successful.");
+      return res.status(200).send(responsePayload);
+    }
+    
+    // CASO 2: É uma interação real do usuário
+    else if (body.encrypted_flow_data) {
+      console.log("User interaction data received. Decrypting...");
+      const decryptedData = decryptFlowData(body);
+      
+      const { screen, data, version } = decryptedData;
+      if (screen === 'SCREEN_ID_NOME') {
+        const userName = data.name_input || 'amigo(a)';
+        const responseScreen = {
+          version,
+          screen: 'SCREEN_ID_SUCESSO',
+          data: {
+            success_title: `Obrigado, ${userName}!`,
+            success_message: 'Seu agendamento foi recebido com sucesso.',
           },
-          Buffer.from(body.encrypted_aes_key, "base64")
-        );
-
-        const cipher = crypto.createCipheriv(
-          "aes-256-gcm",
-          aesKey,
-          Buffer.from(body.initial_vector, "base64")
-        );
-
-        const encrypted = Buffer.concat([
-          cipher.update(Buffer.from(body.encrypted_flow_data, "base64")),
-          cipher.final(),
-        ]);
-
-        const authTag = cipher.getAuthTag();
-        const responsePayload = Buffer.concat([encrypted, authTag]).toString("base64");
-
-        console.log("Handshake successful.");
-        return res.status(200).send(responsePayload);
+        };
+        console.log("Responding to SCREEN_ID_NOME");
+        return res.status(200).json(responseScreen);
       }
     }
 
-    // Resposta padrão para requisições que não se encaixam em nada acima.
-    console.log("Received a request with no encrypted data to process.");
-    return res.sendStatus(200);
+    // CASO 3: Outro tipo de requisição (como um ping simples)
+    else {
+        console.log("Received a simple ping or unknown request type.");
+        return res.sendStatus(200);
+    }
 
   } catch (error) {
     console.error("An error occurred in the POST /webhook endpoint:", error);
