@@ -1,3 +1,5 @@
+// server.js
+
 const express = require("express");
 const crypto = require("crypto");
 const bodyParser = require("body-parser");
@@ -11,6 +13,33 @@ const {
   WHATSAPP_APP_SECRET,
   WHATSAPP_PRIVATE_KEY,
 } = process.env;
+
+// Função para descriptografar dados de um Flow REAL.
+function decryptFlowData(body) {
+  const aesKey = crypto.privateDecrypt(
+    {
+      key: WHATSAPP_PRIVATE_KEY,
+      padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
+      oaepHash: "sha256",
+    },
+    Buffer.from(body.encrypted_aes_key, "base64")
+  );
+
+  const decipher = crypto.createDecipheriv(
+    "aes-256-gcm",
+    aesKey,
+    Buffer.from(body.iv, "base64")
+  );
+
+  decipher.setAuthTag(Buffer.from(body.tag, "base64"));
+
+  const decrypted = Buffer.concat([
+    decipher.update(Buffer.from(body.encrypted_flow_data, "base64")),
+    decipher.final(),
+  ]);
+
+  return JSON.parse(decrypted.toString("utf-8"));
+}
 
 // Rota GET para a verificação inicial do webhook
 app.get("/webhook", (req, res) => {
@@ -47,52 +76,62 @@ app.post("/webhook", (req, res) => {
     console.log("Signature verified.");
     const body = JSON.parse(req.body);
 
-    if (body.action && body.encrypted_aes_key) {
-      console.log("Integrity check triggered. Performing handshake.");
-      
-      const aesKey = crypto.privateDecrypt(
-        {
-          key: WHATSAPP_PRIVATE_KEY,
-          padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
-          oaepHash: "sha256",
-        },
-        Buffer.from(body.encrypted_aes_key, "base64")
-      );
+    if (body.encrypted_flow_data) {
+      let decryptedData;
+      try {
+        // Tenta descriptografar como se fosse um dado de usuário real.
+        decryptedData = decryptFlowData(body);
+        console.log("Successfully decrypted user data.");
 
-      const cipher = crypto.createCipheriv(
-        "aes-256-gcm",
-        aesKey,
-        Buffer.from(body.initial_vector, "base64")
-      );
+        // Se chegou aqui, é uma interação real do Flow.
+        const { screen, data, version } = decryptedData;
+        if (screen === 'SCREEN_ID_NOME') {
+          const userName = data.name_input || 'amigo(a)';
+          const responseScreen = {
+            version,
+            screen: 'SCREEN_ID_SUCESSO',
+            data: {
+              success_title: `Obrigado, ${userName}!`,
+              success_message: 'Seu agendamento foi recebido com sucesso.',
+            },
+          };
+          console.log("Responding to SCREEN_ID_NOME");
+          return res.status(200).json(responseScreen);
+        }
+      } catch (error) {
+        // Se a descriptografia falhou, é a Verificação de Integridade.
+        console.log("Could not decrypt data, assuming it's an integrity check. Performing handshake.");
+        
+        const aesKey = crypto.privateDecrypt(
+          {
+            key: WHATSAPP_PRIVATE_KEY,
+            padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
+            oaepHash: "sha256",
+          },
+          Buffer.from(body.encrypted_aes_key, "base64")
+        );
 
-      const encrypted = Buffer.concat([
-        cipher.update(Buffer.from(body.encrypted_flow_data, "base64")),
-        cipher.final(),
-      ]);
+        const cipher = crypto.createCipheriv(
+          "aes-256-gcm",
+          aesKey,
+          Buffer.from(body.initial_vector, "base64")
+        );
 
-      const authTag = cipher.getAuthTag();
-      const responsePayload = Buffer.concat([encrypted, authTag]).toString("base64");
+        const encrypted = Buffer.concat([
+          cipher.update(Buffer.from(body.encrypted_flow_data, "base64")),
+          cipher.final(),
+        ]);
 
-      console.log("Handshake successful.");
-      return res.status(200).send(responsePayload);
+        const authTag = cipher.getAuthTag();
+        const responsePayload = Buffer.concat([encrypted, authTag]).toString("base64");
+
+        console.log("Handshake successful.");
+        return res.status(200).send(responsePayload);
+      }
     }
 
-    const { screen, data, version } = body;
-    if (screen === 'SCREEN_ID_NOME') {
-      const userName = data.name_input || 'amigo(a)';
-      const responseScreen = {
-        version,
-        screen: 'SCREEN_ID_SUCESSO',
-        data: {
-          success_title: `Obrigado, ${userName}!`,
-          success_message: 'Seu agendamento foi recebido com sucesso.',
-        },
-      };
-      console.log("Responding to SCREEN_ID_NOME");
-      return res.status(200).json(responseScreen);
-    }
-
-    console.log("Received an unknown request type.");
+    // Resposta padrão para requisições que não se encaixam em nada acima.
+    console.log("Received a request with no encrypted data to process.");
     return res.sendStatus(200);
 
   } catch (error) {
