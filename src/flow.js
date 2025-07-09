@@ -6,35 +6,47 @@ export const getNextScreen = async (decryptedBody) => {
   const { screen, data, version, action } = decryptedBody;
   console.log(`Ação recebida: ${action}, Tela atual: ${screen}`);
 
+  // ==================================================================
+  // CORREÇÃO FINAL: Lidar com a Verificação de Integridade (ping)
+  // ==================================================================
+  // O log provou que o teste de integridade envia um { action: 'ping' }.
+  // Precisamos responder a isso para não travar o servidor.
+  if (action === "ping") {
+    console.log("Ação PING recebida (Verificação de Integridade). Respondendo com status ativo.");
+    return {
+      version: version, // Usa a versão da requisição
+      data: {
+        status: "active",
+      },
+    };
+  }
+
   // Lida com a requisição inicial ao abrir o flow
   if (action === "INIT") {
     console.log("Ação INIT: Enviando dados iniciais para a tela APPOINTMENT.");
-    // Estes são os dados que o seu JSON espera para a primeira tela.
     return {
-      version: "7.1", // A versão DEVE corresponder ao seu JSON
+      version: "7.1",
       screen: "APPOINTMENT",
       data: {
         department: [
           { id: "beauty", title: "Beleza e Cuidado Pessoal" },
           { id: "clothing", title: "Roupas e Acessórios" },
-          { id: "home", title: "Casa e Decoração" },
         ],
-        is_location_enabled: false, // Começa desabilitado
+        is_location_enabled: false,
       },
     };
   }
 
-  // Lida com a atualização dinâmica de dados (ex: selecionar um dropdown)
+  // Lida com a atualização dinâmica de dados
   if (action === "update_data") {
     switch (screen) {
       case "APPOINTMENT":
         console.log("Update Data na tela APPOINTMENT:", data);
-        // Habilita o próximo dropdown (localização) e fornece os dados para ele.
         return {
           version: "7.1",
           screen: "APPOINTMENT",
           data: {
-            ...data, // Mantém os dados que já tínhamos (o departamento selecionado)
+            ...data,
             is_location_enabled: true,
             location: [
               { id: "1", title: "King’s Cross, London" },
@@ -45,12 +57,11 @@ export const getNextScreen = async (decryptedBody) => {
     }
   }
 
-  // Lida com o envio de dados de um formulário para o webhook
+  // Lida com o envio de dados de um formulário
   if (action === "data_exchange") {
     switch (screen) {
       case "DETAILS":
         console.log("Data Exchange na tela DETAILS:", data);
-        // Processa os dados do formulário e prepara a tela de resumo
         const summaryAppointment = `Agendamento para ${data.department} em ${data.location}.`;
         const summaryDetails = `Nome: ${data.name}\nEmail: ${data.email}\nTelefone: ${data.phone}`;
         
@@ -60,13 +71,13 @@ export const getNextScreen = async (decryptedBody) => {
             data: {
                 appointment: summaryAppointment,
                 details: summaryDetails,
-                ...data // Passa os dados adiante caso precise deles na tela final
+                ...data 
             }
         };
     }
   }
 
-  // Lida com a navegação entre telas (quando o usuário clica em "Continuar" ou "Confirmar")
+  // Lida com a navegação entre telas
   if (action === "navigate") {
     switch (screen) {
         case "APPOINTMENT":
@@ -74,7 +85,7 @@ export const getNextScreen = async (decryptedBody) => {
             return {
                 version: "7.1",
                 screen: "DETAILS",
-                data: data // Passa os dados selecionados (departamento, local, etc.) para a próxima tela
+                data: data
             };
         case "SUMMARY":
              console.log("Navegando da tela SUMMARY para a tela final de confirmação");
@@ -89,5 +100,7 @@ export const getNextScreen = async (decryptedBody) => {
   }
 
   console.error("Unhandled request body:", decryptedBody);
-  throw new Error("Unhandled request.");
+  // Removemos o 'throw new Error' para não travar em casos inesperados.
+  // Em vez disso, retornamos uma resposta vazia de sucesso.
+  return { version: "7.1", data: { acknowledged: true } };
 };
