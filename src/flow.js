@@ -1,5 +1,7 @@
 // src/flow.js
 
+// Esta função é o cérebro do seu webhook.
+// Ela decide qual tela enviar com base na interação do usuário.
 export const getNextScreen = async (decryptedBody) => {
   const { screen, data, version, action } = decryptedBody;
   console.log(`Ação recebida: ${action}, Tela atual: ${screen}`);
@@ -7,30 +9,32 @@ export const getNextScreen = async (decryptedBody) => {
   // Lida com a requisição inicial ao abrir o flow
   if (action === "INIT") {
     console.log("Ação INIT: Enviando dados iniciais para a tela APPOINTMENT.");
+    // Estes são os dados que o seu JSON espera para a primeira tela.
     return {
-      version: "7.1",
+      version: "7.1", // A versão DEVE corresponder ao seu JSON
       screen: "APPOINTMENT",
       data: {
         department: [
           { id: "beauty", title: "Beleza e Cuidado Pessoal" },
           { id: "clothing", title: "Roupas e Acessórios" },
+          { id: "home", title: "Casa e Decoração" },
         ],
-        is_location_enabled: false,
+        is_location_enabled: false, // Começa desabilitado
       },
     };
   }
 
-  // Lida com as trocas de dados
-  if (action === "data_exchange") {
+  // Lida com a atualização dinâmica de dados (ex: selecionar um dropdown)
+  if (action === "update_data") {
     switch (screen) {
       case "APPOINTMENT":
-        console.log("Data Exchange na tela APPOINTMENT:", data);
-        // Habilita o próximo dropdown (localização)
+        console.log("Update Data na tela APPOINTMENT:", data);
+        // Habilita o próximo dropdown (localização) e fornece os dados para ele.
         return {
           version: "7.1",
           screen: "APPOINTMENT",
           data: {
-            ...data,
+            ...data, // Mantém os dados que já tínhamos (o departamento selecionado)
             is_location_enabled: true,
             location: [
               { id: "1", title: "King’s Cross, London" },
@@ -38,10 +42,15 @@ export const getNextScreen = async (decryptedBody) => {
             ],
           },
         };
+    }
+  }
 
+  // Lida com o envio de dados de um formulário para o webhook
+  if (action === "data_exchange") {
+    switch (screen) {
       case "DETAILS":
         console.log("Data Exchange na tela DETAILS:", data);
-        // Processa os dados do formulário e envia a tela de resumo
+        // Processa os dados do formulário e prepara a tela de resumo
         const summaryAppointment = `Agendamento para ${data.department} em ${data.location}.`;
         const summaryDetails = `Nome: ${data.name}\nEmail: ${data.email}\nTelefone: ${data.phone}`;
         
@@ -51,13 +60,13 @@ export const getNextScreen = async (decryptedBody) => {
             data: {
                 appointment: summaryAppointment,
                 details: summaryDetails,
-                ...data 
+                ...data // Passa os dados adiante caso precise deles na tela final
             }
         };
     }
   }
 
-  // Lida com a navegação entre telas
+  // Lida com a navegação entre telas (quando o usuário clica em "Continuar" ou "Confirmar")
   if (action === "navigate") {
     switch (screen) {
         case "APPOINTMENT":
@@ -65,7 +74,7 @@ export const getNextScreen = async (decryptedBody) => {
             return {
                 version: "7.1",
                 screen: "DETAILS",
-                data: data
+                data: data // Passa os dados selecionados (departamento, local, etc.) para a próxima tela
             };
         case "SUMMARY":
              console.log("Navegando da tela SUMMARY para a tela final de confirmação");
