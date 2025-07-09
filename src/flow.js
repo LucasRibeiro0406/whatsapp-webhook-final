@@ -1,98 +1,93 @@
 // src/flow.js
 
-// Função principal que decide qual tela mostrar a seguir.
+// Esta função é o cérebro do seu webhook.
+// Ela decide qual tela enviar com base na interação do usuário.
 export const getNextScreen = async (decryptedBody) => {
   const { screen, data, version, action } = decryptedBody;
   console.log(`Ação recebida: ${action}, Tela atual: ${screen}`);
 
-  // Lida com a requisição inicial ao abrir o flow.
-  // Envia a tela APPOINTMENT com os dados iniciais para os dropdowns.
+  // Lida com a requisição inicial ao abrir o flow e exibe a tela APPOINTMENT
   if (action === "INIT") {
-    console.log("Ação INIT: Enviando a tela de agendamento inicial.");
+    console.log("Ação INIT: Enviando dados iniciais para a tela APPOINTMENT.");
+    // Estes são os dados que o seu JSON espera para a primeira tela.
     return {
-      version,
+      version: "7.1", // A versão DEVE corresponder ao seu JSON
       screen: "APPOINTMENT",
       data: {
-        // Estes são os dados que preenchem seus dropdowns.
-        // No futuro, você pode buscar isso de um banco de dados.
         department: [
-          { id: "beauty", title: "Beleza & Cuidado Pessoal" },
-          { id: "electronics", title: "Eletrônicos" },
+          { id: "beauty", title: "Beleza e Cuidado Pessoal" },
+          { id: "clothing", title: "Roupas e Acessórios" },
+          { id: "home", title: "Casa e Decoração" },
         ],
-        is_location_enabled: false, // Começa desabilitado até um departamento ser escolhido
+        is_location_enabled: false,
         is_date_enabled: false,
         is_time_enabled: false,
       },
     };
   }
 
-  // Lida com interações do usuário dentro do flow.
+  // Lida com as interações do usuário (cliques em botões, seleções em dropdowns)
   if (action === "data_exchange") {
     switch (screen) {
-      // Caso o usuário interaja com a tela de agendamento.
+      // Caso o usuário interaja com a tela APPOINTMENT
       case "APPOINTMENT":
-        console.log("Troca de dados na tela APPOINTMENT:", data);
-        // Exemplo: Usuário selecionou um departamento.
-        // Agora habilitamos o dropdown de localização e o preenchemos.
+        console.log("Data Exchange na tela APPOINTMENT:", data);
+        // Lógica para quando um departamento é selecionado
+        // Habilita o próximo dropdown (localização)
         return {
-          version,
+          version: "7.1",
           screen: "APPOINTMENT",
           data: {
-            ...data, // Mantém os dados que já foram selecionados
+            // Mantém os dados que já tínhamos
+            ...data, 
+            // Novos dados para o próximo passo
             is_location_enabled: true,
             location: [
               { id: "1", title: "King’s Cross, London" },
               { id: "2", title: "Oxford Street, London" },
             ],
-            // Você pode adicionar mais lógica aqui para habilitar data/hora
-            is_date_enabled: true,
-            date: [{ id: "2024-12-25", title: "25 de Dezembro" }],
-            is_time_enabled: true,
-            time: [{ id: "10:30", title: "10:30" }],
           },
         };
 
-      // Caso o usuário tenha preenchido seus detalhes e clicado em "Continuar".
+      // Caso o usuário interaja com a tela DETAILS (preencheu nome, email, etc.)
       case "DETAILS":
-        console.log("Troca de dados na tela DETAILS:", data);
-        // Agora, montamos a tela de resumo com os dados coletados.
-        return {
-          version,
-          screen: "SUMMARY",
-          data: {
-            // Passa todos os dados para a tela de resumo.
-            ...data,
-            appointment: `Agendamento para ${data.date} às ${data.time}`,
-            details: `Nome: ${data.name}\nEmail: ${data.email}\nTelefone: ${data.phone}`,
-          },
-        };
-      
-      // Caso o usuário confirme na tela de resumo.
-      case "SUMMARY":
-        console.log("Troca de dados na tela SUMMARY: Agendamento confirmado!");
-        // TODO: Salvar os dados finais no seu banco de dados.
-        // Ex: await supabase.from('agendamentos').insert({ ...data });
+        console.log("Data Exchange na tela DETAILS:", data);
+        // Processa os dados do formulário e prepara a tela de resumo
+        const summaryAppointment = `Agendamento para ${data.department} em ${data.location} no dia ${data.date} às ${data.time}.`;
+        const summaryDetails = `Nome: ${data.name}\nEmail: ${data.email}\nTelefone: ${data.phone}\nDetalhes: ${data.more_details || 'N/A'}`;
         
-        // Envia uma tela final de sucesso.
         return {
-            version,
-            screen: "SUCCESS", // Você precisaria adicionar uma tela "SUCCESS" no seu JSON.
+            version: "7.1",
+            screen: "SUMMARY",
             data: {
-                message: "Seu agendamento foi confirmado com sucesso!"
+                appointment: summaryAppointment,
+                details: summaryDetails,
+                // Passa os dados adiante caso precise deles na tela final
+                ...data 
             }
-        }
+        };
     }
   }
 
-  // Lida com a navegação entre telas (ex: do APPOINTMENT para DETAILS).
+  // Lida com a navegação entre telas (quando o usuário clica em "Continuar")
   if (action === "navigate") {
-    if (screen === "APPOINTMENT") {
-      console.log("Navegando de APPOINTMENT para DETAILS.");
-      return {
-        version,
-        screen: "DETAILS",
-        data: data, // Passa os dados selecionados (departamento, local, etc.) para a próxima tela.
-      };
+    switch (screen) {
+        case "APPOINTMENT":
+            console.log("Navegando da tela APPOINTMENT para DETAILS");
+            return {
+                version: "7.1",
+                screen: "DETAILS",
+                data: data // Passa os dados selecionados (departamento, local, etc.) para a próxima tela
+            };
+        case "SUMMARY":
+             console.log("Navegando da tela SUMMARY para a tela final de confirmação");
+             return {
+                version: "7.1",
+                screen: "CONFIRMATION", // Uma nova tela terminal que vamos criar
+                data: {
+                    message: "Seu agendamento foi confirmado com sucesso!"
+                }
+             }
     }
   }
 
